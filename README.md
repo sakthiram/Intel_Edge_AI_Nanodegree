@@ -7,6 +7,14 @@
 **SETUP**
 > I think no need to setup since they provide workspace for running each exercise.
 1) Install openvino toolkit.
+
+   Configure EACH time for setting up ENV. 
+
+   Ref: https://docs.openvinotoolkit.org/2020.3/_docs_install_guides_installing_openvino_windows.html#set-the-environment-variables 
+   ```bash
+   cd C:\Program Files (x86)\IntelSWTools\openvino\bin\
+   setupvars.bat
+   ```
 2) Install DL Workbench.
     - Needs Docker. Installing docker requires virtualization.
         - Enable Hyper-V feature from Windows Features on/off.
@@ -213,4 +221,198 @@ python /opt/intel/openvino/deployment_tools/model_optimizer/mo.py --input_model 
 
 ## Day 3
 ## Lesson 4 -  The Inference Engine
+Where the Model Optimizer made some improvements to size and complexity of the models to improve memory and computation times, the Inference Engine provides hardware-based optimizations to get even further improvements from a model. This really empowers your application to run at the edge and use up as little of device resources as possible.
+
+To load an IR into the Inference Engine, you’ll mostly work with two classes in the openvino.inference_engine library (if using Python):
+
+`IECore`, which is the Python wrapper to work with the Inference Engine
+
+`IENetwork`, which is what will initially hold the network and get loaded into IECore
+
+### Exercise code
+**feed_network.py**
+```python
+### Load the necessary libraries
+import os
+from openvino.inference_engine import IENetwork, IECore
+
+def load_to_IE(model_xml):
+    ### Load the Inference Engine API
+    plugin = IECore()
+
+    ### Load IR files into their related class
+    model_bin = os.path.splitext(model_xml)[0] + ".bin"
+    net = IENetwork(model=model_xml, weights=model_bin)
+
+    ### Add a CPU extension, if applicable.
+    plugin.add_extension(CPU_EXTENSION, "CPU")
+
+    ### Get the supported layers of the network
+    supported_layers = plugin.query_network(network=net, device_name="CPU")
+
+    ### Check for any unsupported layers, and let the user
+    ### know if anything is missing. Exit the program, if so.
+    unsupported_layers = [l for l in net.layers.keys() if l not in supported_layers]
+    if len(unsupported_layers) != 0:
+        print("Unsupported layers found: {}".format(unsupported_layers))
+        print("Check whether extensions are available to add to IECore.")
+        exit(1)
+
+    ### Load the network into the Inference Engine
+    plugin.load_network(net, "CPU")
+
+    print("IR successfully loaded into Inference Engine.")
+
+    return
+```
+
+Run using 
+`python feed_network.py -m /home/workspace/models/human-pose-estimation-0001.xml`
+
+
+### Requests to IE
+After you load the IENetwork into the IECore, you get back an ExecutableNetwork, which is what you will send inference requests to. There are two types of inference requests you can make: Synchronous and Asynchronous.
+With an ExecutableNetwork, synchronous requests just use the infer function, while asynchronous requests begin with start_async, and then you can wait until the request is complete. 
+
+**Exercise code**
+```python
+def sync_inference(exec_net, input_blob, image):
+    '''
+    Performs synchronous inference
+    Return the result of inference
+    '''
+    result = exec_net.infer({input_blob: image})
+
+    return result
+
+def async_inference(exec_net, input_blob, image):
+    '''
+    Performs asynchronous inference
+    Returns the `exec_net`
+    '''
+    exec_net.start_async(request_id=0, inputs={input_blob: image})
+    while True:
+        status = exec_net.requests[0].wait(-1)
+        if status == 0:
+            break
+        else:
+            time.sleep(1)
+    return exec_net
+```
+
+## Lesson 5 - Deploying an Edge App
+
+OpenCV basics: VideoCapture, resize, cvtColor, rectangle, imwrite
+
+**Input streams**
+- OPEN & READ => capture.open, while(capture.isOpened), capture.read
+- CLOSE => release, cv2.destroyAllWindows, cv2.waitkey (ctrl+C etc.) 
+
+**MQTT**
+
+MQTT stands for MQ Telemetry Transport, where the MQ came from an old IBM product line called IBM MQ for Message Queues (although MQTT itself does not use queues). MQTT is a lightweight publish/subscribe architecture that is designed for resource-constrained devices and low-bandwidth setups. Port 1883 is reserved for use with MQTT.
+
+There is a useful Python library for working with MQTT called paho-mqtt. Within, there is a sub-library called client, which is how you create an MQTT client that can publish or subscribe to the broker.
+
+To do so, you’ll need to know the IP address of the broker, as well as the port for it. With those, you can connect the client, and then begin to either publish or subscribe to topics.
+
+Publishing involves feeding in the topic name, as well as a dictionary containing a message that is dumped to JSON. Subscribing just involves feeding in the topic name to be subscribed to.
+
+**FFMPEG**
+
+The FFmpeg library is one way to do this. The name comes from “fast forward” MPEG, meaning it’s supposed to be a fast way of handling the MPEG video standard (among others).
+
+In our case, we’ll use the ffserver feature of FFmpeg, which, similar to MQTT, will actually have an intermediate FFmpeg server that video frames are sent to. The final Node server that displays a webpage will actually get the video from that FFmpeg server.
+
+There are other ways to handle streaming video as well. In Python, you can also use a flask server to do some similar things, although we’ll focus on FFmpeg here.
+
+**Nodejs**
+
+Node.js is an open-source environment for servers, where Javascript can be run outside of a browser. Consider a social media page, for instance - that page is going to contain different content for each different user, based on their social network. Node allows for Javascript to run outside of the browser to gather the various relevant posts for each given user, and then send those posts to the browser.
+
+In our case, a Node server can be used to handle the data coming in from the MQTT and FFmpeg servers, and then actually render that content for a web page user interface.
+
+## Lesson 3 - Choosing the Right hardware
+
+![](.README_images/Edge_AI_Steps.png)
+
+> Openvino is not used for model training, it is only used for deploying models and running inference on edge devices.
+
+![](.README_images/Edge_AI_system_flow.png)
+
+### Intel dev cloud
+> The Intel DevCloud is a cloud environment that allows you to build, prototype, and check the performance of your application on several different hardware devices.
+
+The edge nodes (CPU, GPU, VPU and FPGA or combination) can be selected using a job queue dispatch. 
+
+> CPU, GPU, multiprocessing, multithreading
+
+**VPU**
+
+![](.README_images/vpu.png)
+- **Neural compute engine**. The Myriad X features a neural compute engine, which is a dedicated hardware accelerator optimized for running deep learning neural networks at low power without any loss in accuracy.
+- **Imaging accelerators**. As we said earlier, VPUs are specialized for image processing. One example of this specialization is found in the imaging accelerators, which have specific kernels that are used for image processing operations. These operations range from simple techniques for denoising an image, to algorithms for edge detection.
+- **On-chip memory**. The Myriad X has 2.5 Mbytes of on-chip memory. This is key to minimizing off-chip data movement, which in turn reduces latency and power consumption.
+- **Vector processors**. The Myriad X has sixteen proprietary vector processors known as Streaming Hybrid Architecture Vector Engine (SHAVE) processors. SHAVE processors use 128bit VLIW (Very long instruction word) architecture and are optimized for computer vision workloads.
+- **Energy consumption**. The Myriad X has a very low power consumption of only 1-2 watts.
+
+## Lesson 4 - Software Optimization techniques
+
+**Reducing model size**
+- Quantization
+- Model compression 
+- Knowledge distillation
+
+**Reducing model ops**
+- Model pruning (discarding of less impacting weights)
+- More efficient layers (Pooling, Separable convolutions: depthwise & one point layers)
+
+**Performance Metrics**
+- FLOPs (number of operations)
+- FLOPS (Ops per second)
+- MACs (convolution ops => Multiply-accumulate ops, generally ~2*FLOPs)
+
+## Projects
+
+### Project 1 - people detector
+```bash
+python main.py -i resources/Pedestrian_Detect_2_1_1.mp4 -m /home/workspace/intel/person-detection-retail-0013/FP16/person-detection-retail-0013.xml -l /opt/intel/openvino/deployment_tools/inference_engine/lib/intel64/libcpu_extension_sse4.so -d CPU -pt 0.6 | ffmpeg -v warning -f rawvideo -pixel_format bgr24 -video_size 768x432 -framerate 24 -i - http://0.0.0.0:3004/fac.ffm
+```
+
+```python
+client = mqtt.Client()
+client.connect(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE_INTERVAL)
+client.publish("class", json.dumps({"class_names": class_names}))
+client.publish("speedometer", json.dumps({"speed": speed}))
+client.disconnect()
+```
+
+```python
+sys.stdout.buffer.write(frame)  
+sys.stdout.flush()
+```
+
+### Project 2 - queue management
+![](.README_images/transportation.png)
+![](.README_images/manufacturing.png)
+![](.README_images/retail.png)
+
+
+**Performance**
+![](.README_images/model_load_time.png)
+![](.README_images/Inference Time.png)
+![](.README_images/fps.png)
+
+### Project 3 - Mouse pointer controller
+
+```bash
+python3 main.py -f model/intel/face-detection-adas-binary-0001/FP32-INT1/face-detection-adas-binary-0001.xml -fl model/intel/landmarks-regression-retail-0009/FP32/landmarks-regression-retail-0009.xml -hp model/intel/head-pose-estimation-adas-0001/FP32/head-pose-estimation-adas-0001.xml -g model/intel/gaze-estimation-adas-0002/FP32/gaze-estimation-adas-0002.xml -i demo.avi -flags fd, fld, hp, ge
+```
+or
+```bash
+python3 main.py -f model/intel/face-detection-adas-binary-0001/FP32-INT1/face-detection-adas-binary-0001.xml -fl model/intel/landmarks-regression-retail-0009/FP32/landmarks-regression-retail-0009.xml -hp model/intel/head-pose-estimation-adas-0001/FP32/head-pose-estimation-adas-0001.xml -g model/intel/gaze-estimation-adas-0002/FP32/gaze-estimation-adas-0002.xml -i cam
+```
+
+![](.README_images/demo.png)
+
 
